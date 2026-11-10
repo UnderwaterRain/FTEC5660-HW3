@@ -170,14 +170,93 @@ for each public company. Grading uses a private set of about 20 unseen
 companies with the same tools and the same answer key rules, but different
 names and wording, and scores your 3 points only.
 
-## Homework 3 solution:
-> to students: this is your report, see the homework description.
+## Homework 3 solution
 
 ### My 3 points and rules
-> for each point: why you chose it, your PASS rule in one or two sentences, and the evidence it uses. Quote Fisher where it helps.
+
+I selected Fisher's points 1, 5 and 11 to assess sales growth potential, profitability and competitive advantage. This combination is relevant to my interest in company and investment analysis and combines quantitative financial analysis with qualitative evidence assessment.
+
+**Point 1: Market potential for sales growth**
+
+I chose this point because revenue growth helps assess whether a company has an expanding business. PASS requires cumulative revenue growth from FY2023 to FY2025 to exceed the company's industry median; otherwise, the verdict is FAIL.
+
+The agent uses `sql_query` to aggregate annual revenue from `orders`, calculate `(FY2025 revenue / FY2023 revenue - 1) * 100`, and compare it with `industry_medians.revenue_growth_2y_pct` for the company's industry. Historical growth is a proxy for future sales potential, rather than proof that growth will continue.
+
+**Point 5: Worthwhile profit margin**
+
+I chose this point to assess how effectively the company converts sales into operating profit relative to its industry. PASS requires the FY2025 operating margin to exceed the company's industry median; otherwise, the verdict is FAIL.
+
+The agent uses `sql_query` to obtain revenue from `orders` and expenses from `monthly_costs`. Operating margin is calculated as `(revenue - cost of sales - selling and administrative expenses - R&D expenses) / revenue * 100` and compared with `industry_medians.operating_margin_pct`. Revenue and expenses are aggregated separately for the same fiscal year to avoid duplicated amounts.
+
+**Point 11: Competitive advantage**
+
+I chose this point because growth and profitability alone do not explain whether a company's position is defensible. PASS requires interview evidence of a clear, meaningful advantage that is difficult to replicate or displace; evidence of easy imitation, interchangeable offerings, price-only competition or no meaningful defensible advantage leads to FAIL.
+
+The agent calls `interview(role="competitor", topic="competitive_edge")`. The model evaluates the answer using the stated rule and explains its verdict. Potential advantages include switching costs, proprietary technology, cost advantages, distribution advantages and industry-specific barriers; no single type is required.
 
 ### Design
-> a visualization of your agent design and one paragraph describing it.
+
+```mermaid
+flowchart TD
+    A["Start company analysis"] --> B["SQL tool: revenue growth and industry comparison"]
+    B --> C["Store Point 1 verdict and evidence"]
+    C --> D["SQL tool: operating margin and industry comparison"]
+    D --> E["Store Point 5 verdict and evidence"]
+    E --> F["Interview tool: competitor on competitive edge"]
+    F --> G["DeepSeek via LangChain: assess Point 11"]
+    G --> H{"Valid verdict and reason?"}
+    H -->|Yes| I["Combine verdicts and summary"]
+    H -->|No, attempt remains| G
+    H -->|No, attempts exhausted| J["Record error and retain completed verdicts"]
+    I --> K["Provided runner writes results.csv"]
+    J --> K
+```
+
+The agent uses a predefined workflow that routes each point to its relevant evidence source. `build_agent()` initializes `deepseek-v4-flash` through LangChain's `ChatDeepSeek`, and `analyze_companies()` processes companies sequentially. For points 1 and 5, SQL performs both the arithmetic and the PASS/FAIL comparisons before the tool rounds displayed values. For point 11, one competitor interview is supplied to the model, which returns a JSON verdict and explanation. The code validates the response and allows up to two analysis attempts, reusing the interview evidence. The model client also permits up to two retries for retryable request failures. Per-company exception handling retains completed verdicts and records errors so that a company-level failure does not stop the entire run. Summaries combine numerical evidence with the model's competitive-advantage explanation. All company evidence is accessed through the provided tools.
 
 ### Results
-> your point score on `public_test`, the companies where your verdicts disagree with the public answers, and why.
+
+The completed agent was evaluated using:
+
+```bash
+python hw3.py --data-folder public_test
+```
+
+In the observed completed public-test run, it processed all 20 companies and generated `results.csv`.
+
+| Metric | Result |
+|---|---:|
+| Companies evaluated | 20 |
+| Selected points per company | 3 |
+| Correct verdicts | 60/60 |
+| Point 1 correct verdicts | 20/20 |
+| Point 5 correct verdicts | 20/20 |
+| Point 11 correct verdicts | 20/20 |
+| Balanced point score | 100.0% |
+
+There were no disagreements with the public answers in this run, so there are no misclassified companies to explain. Each company used one interview.
+
+For example, `ashgrove_labs` passed point 1 because its FY2023–FY2025 revenue growth was 24.92%, above its industry median of 21.70%. It passed point 5 because its FY2025 operating margin was 13.36%, above the industry median of 9.40%. It failed point 11 because the competitor described products that were easy to copy and competition driven by price.
+
+These results describe one completed run on the public dataset, which was also used during development. They do not establish performance on unseen companies or consistency across repeated model runs. Further limitations include using historical growth as a proxy for future potential, using a single year of operating profitability, and relying on one interview for competitive-advantage assessment.
+
+## Task 2: Reflection
+
+### A Useful Financial AI Should Be Willing to Disagree with Its User
+
+A financial AI assistant should check the assumptions behind a question before offering an answer. A Which? investigation published in November 2025 illustrates why this matters. Researchers deliberately asked how to invest a £25,000 annual ISA allowance, although the applicable allowance was £20,000. In that test, ChatGPT and Copilot failed to correct the premise and continued providing investment guidance [1]. This does not establish that sycophancy caused the error; inadequate factual verification could also explain it. Nevertheless, it shows how an apparently helpful answer can carry a user's mistaken assumption into a financial decision.
+
+AI-sycophancy makes this concern particularly relevant to investment research. In May 2025, OpenAI explained that a GPT-4o update had made the model excessively agreeable, including validating doubts and encouraging impulsive actions, and that the update had been rolled back [2]. In a financial setting, I think similar behaviour could reinforce confirmation bias. An investor who asks an assistant to justify buying a favourite stock might receive a persuasive argument that overlooks contrary evidence. This is a plausible risk rather than a financial outcome demonstrated by that incident. For me, the lesson is that user satisfaction and analytical quality are different objectives: a useful investment assistant must be able to challenge the user's preferred conclusion.
+
+The discussion of “AI-psychosis” raises a related but more serious concern about reinforcing unfounded beliefs. I would distinguish this from ordinary investment overconfidence or a poor financial decision. OpenAI's October 2025 safety update explicitly addressed responses to possible delusions and mania, including avoiding affirmation of ungrounded beliefs [3]. This provider statement does not establish that AI causes psychosis. However, it suggests an important boundary for financial applications. In a hypothetical situation where a user believes an AI is revealing secret market messages intended exclusively for them, the assistant should not validate that belief or claim special predictive powers. It should respond respectfully, avoid encouraging consequential transactions based on that belief, and encourage appropriate human support.
+
+These issues also change how I interpret my own Fisher agent. Its SQL-based rules make the numerical verdicts independent of a user's enthusiasm, while the competitive-advantage prompt requires the model to use interview evidence. However, these design choices do not prove resistance to sycophancy. The agent achieved 60/60 correct verdicts in one public-test run, but that test did not evaluate leading user statements, prolonged interaction or psychological safety. A useful future test would keep the company evidence unchanged while adding bullish and bearish user opinions, then check whether the verdict changes without an evidential reason. I would also test whether the explanation preserves adverse evidence. My main takeaway is that financial AI should help users examine their beliefs and understand uncertainty, while keeping conclusions accountable to evidence.
+
+### References
+
+[1] Which? (2025, November 18). [Can you trust AI? ChatGPT and other AI chatbots put to the test](https://www.which.co.uk/news/article/can-you-trust-ai-chatgpt-and-other-ai-chatbots-put-to-the-test-aetjt5e0RnPB).
+
+[2] OpenAI. (2025, May 2). [Expanding on what we missed with sycophancy](https://openai.com/index/expanding-on-sycophancy/).
+
+[3] OpenAI. (2025, October 27). [Strengthening ChatGPT’s responses in sensitive conversations](https://openai.com/index/strengthening-chatgpt-responses-in-sensitive-conversations/).
+
